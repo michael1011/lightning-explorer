@@ -1,4 +1,4 @@
-import { clsx, type ClassValue } from "clsx";
+import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
 const decimals = 8;
@@ -23,8 +23,15 @@ export const satoshisToSatcomma = (satoshis: number): string => {
   for (const [num, index] of [3, 6].entries()) {
     coins = `${coins.substring(
       0,
-      coins.length - index - num
+      coins.length - index - num,
     )} ${coins.substring(coins.length - index - num)}`;
   }
   return coins;
 };
+
+export const isPubkey = (pubkey: string) => {
+  return /^[0-9a-fA-F]{66}$/.test(pubkey);
+};
+
+export const trimPubkey = (pubkey: string) =>
+  `${pubkey.slice(0, 10)}...${pubkey.slice(-10)}`;

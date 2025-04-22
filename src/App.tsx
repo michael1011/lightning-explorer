@@ -1,8 +1,13 @@
-import "./App.css";
-import Search from "./components/Search";
+import Landing from "./components/Landing";
 
 function App() {
-  return <Search />;
+  return (
+    <>
+      <div className="container mx-auto">
+        <Landing />
+      </div>
+    </>
+  );
 }
 
 export default App;
