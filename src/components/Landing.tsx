@@ -15,7 +15,7 @@ function Landing() {
     } else if (isChannelId(search)) {
       navigate(`/channel/${search}`);
     } else if (isToBeResolved(search)) {
-      navigate(`/resolver/${search}`);
+      navigate(`/resolver/${encodeURIComponent(search)}`);
     } else {
       navigate(`/search/${search}`);
     }

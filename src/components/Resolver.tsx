@@ -175,22 +175,23 @@ const InfoCard = ({ type, properties }: Info) => {
 
 const Resolver = () => {
   const { input } = useParams();
+  const decodedInput = input ? decodeURIComponent(input) : undefined;
 
-  const info = useSWR<Info[]>(input, async () => {
-    if (input === undefined) {
+  const info = useSWR<Info[]>(decodedInput, async () => {
+    if (decodedInput === undefined) {
       return [];
     }
 
     const promises: Promise<Info>[] = [];
 
-    if (isSatsAddress(input)) {
-      const urlsplit = input.split("@");
+    if (isSatsAddress(decodedInput)) {
+      const urlsplit = decodedInput.split("@");
       const lnurl = `https://${urlsplit[1]}/.well-known/lnurlp/${urlsplit[0]}`;
 
       promises.push(getLnurl(lnurl));
-      promises.push(resolveBip353(input));
-    } else if (isLnurl(input)) {
-      const { bytes } = bech32.decodeToBytes(input);
+      promises.push(resolveBip353(decodedInput));
+    } else if (isLnurl(decodedInput)) {
+      const { bytes } = bech32.decodeToBytes(decodedInput);
       promises.push(getLnurl(utf8.encode(bytes)));
     }
 
@@ -210,7 +211,7 @@ const Resolver = () => {
     <>
       <Header />
       <div className="flex flex-col items-center justify-center">
-        <h1>Resolving: {trimLongString(input!)}</h1>
+        <h1>Resolving: {trimLongString(decodedInput!)}</h1>
         <div className="w-full max-w-xl mt-10 break-all flex flex-col gap-4">
           {info.data!.length === 0 && <h2>No info found</h2>}
           {info.data!.map((info) => (

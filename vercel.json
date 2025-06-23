@@ -1,3 +1,6 @@
 {
-  "routes": [{ "src": "/[^.]+", "dest": "/", "status": 200 }]
+  "routes": [
+    { "src": "/resolver/(.*)", "dest": "/", "status": 200 },
+    { "src": "/[^.]+", "dest": "/", "status": 200 }
+  ]
 }
