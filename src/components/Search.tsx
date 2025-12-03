@@ -23,19 +23,13 @@ import Header from "./Header";
 import { LoadingSpinnerFullscreen } from "./LoadingSpinner";
 import type { Channel, NodeInfo } from "./Node";
 
-function SearchResult({ nodeInfo }: { nodeInfo: NodeInfo }) {
-  const channels = useSWR<Channel[]>(
-    `${API_URL}/v2/lightning/${CURRENCY}/channels/${nodeInfo.id}`,
-    async (url: string) => {
-      try {
-        return await fetcher<Channel[]>(url);
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      } catch (error) {
-        return [];
-      }
-    },
-  );
-
+function SearchResult({
+  nodeInfo,
+  channels,
+}: {
+  nodeInfo: NodeInfo;
+  channels: Channel[] | undefined;
+}) {
   return (
     <div className="mt-4">
       <Link to={`/node/${nodeInfo.id}`}>
@@ -44,13 +38,13 @@ function SearchResult({ nodeInfo }: { nodeInfo: NodeInfo }) {
             <CardTitle>{nodeInfo.alias}</CardTitle>
             <CardDescription>{trimLongString(nodeInfo.id)}</CardDescription>
             <CardDescription>
-              {channels.data !== undefined ? (
+              {channels !== undefined ? (
                 <>
-                  <p>Channels: {channels.data.length}</p>
+                  <p>Channels: {channels.length}</p>
                   <p>
                     Capacity:{" "}
                     {satoshisToSatcomma(
-                      channels.data.reduce(
+                      channels.reduce(
                         (acc, channel) => acc + channel.capacity,
                         0,
                       ),
@@ -116,12 +110,56 @@ export default function Search() {
     },
   );
 
+  const channelDataKeys = nodeInfo.data?.map(
+    (node) => `${API_URL}/v2/lightning/${CURRENCY}/channels/${node.id}`,
+  );
+
+  const channelsData = useSWR<Record<string, Channel[]>>(
+    nodeInfo.data ? ["channels", ...channelDataKeys!] : null,
+    async () => {
+      const results = await Promise.allSettled(
+        nodeInfo.data!.map(async (node) => {
+          try {
+            const channels = await fetcher<Channel[]>(
+              `${API_URL}/v2/lightning/${CURRENCY}/channels/${node.id}`,
+            );
+            return { nodeId: node.id, channels };
+          } catch {
+            return { nodeId: node.id, channels: [] };
+          }
+        }),
+      );
+
+      const channelMap: Record<string, Channel[]> = {};
+      results.forEach((result) => {
+        if (result.status === "fulfilled") {
+          channelMap[result.value.nodeId] = result.value.channels;
+        }
+      });
+      return channelMap;
+    },
+  );
+
   if (nodeInfo.error) {
     return <Error error={nodeInfo.error} />;
   }
   if (nodeInfo.isLoading) {
     return <LoadingSpinnerFullscreen />;
   }
+
+  const sortedNodes = [...nodeInfo.data!].sort((a, b) => {
+    const channelsA = channelsData.data?.[a.id] || [];
+    const channelsB = channelsData.data?.[b.id] || [];
+    const capacityA = channelsA.reduce(
+      (acc, channel) => acc + channel.capacity,
+      0,
+    );
+    const capacityB = channelsB.reduce(
+      (acc, channel) => acc + channel.capacity,
+      0,
+    );
+    return capacityB - capacityA;
+  });
 
   return (
     <>
@@ -133,8 +171,12 @@ export default function Search() {
         </p>
         {decodedInvoice && <InvoiceInfo decoded={decodedInvoice} />}
         <div className="w-full max-w-xl">
-          {nodeInfo.data!.map((node) => (
-            <SearchResult key={node.id} nodeInfo={node} />
+          {sortedNodes.map((node) => (
+            <SearchResult
+              key={node.id}
+              nodeInfo={node}
+              channels={channelsData.data?.[node.id]}
+            />
           ))}
         </div>
       </div>
