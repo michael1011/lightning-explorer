@@ -129,45 +129,101 @@ export const decodeBolt11 = async (
   };
 };
 
-export const decodeOffer = async (invoice: string): Promise<DecodedInvoice> => {
-  const { Offer } = await import("boltz-bolt12");
+// Extract the first_node_id (introduction node) pubkey of every blinded path in
+// a BOLT12 blinded_path array (the raw bytes of an offer_paths/invoice_paths
+// TLV value). Paths whose first_node_id is a short_channel_id reference (prefix
+// 0x00 or 0x01) carry no pubkey and are skipped. Per-path layout:
+//   first_node_id: 33-byte point (0x02/0x03) or 9-byte sciddir (0x00/0x01)
+//   path_key:      33-byte point
+//   num_hops:      u8
+//   hops:          num_hops * (blinded_node_id[33] + enclen[u16] + data[enclen])
+const blindedPathIntroductionNodes = (data?: Uint8Array): string[] => {
+  if (data === undefined) {
+    return [];
+  }
 
-  const decoded = new Offer(invoice);
+  const nodes: string[] = [];
+  let offset = 0;
 
   try {
-    return {
-      invoiceType: InvoiceType.Offer,
-      pubkeys: [
-        decoded.signing_pubkey,
-        ...decoded.paths.map((path) => path.introduction_node),
-      ]
-        .filter((p) => p !== undefined)
-        .map((p) => Buffer.from(p).toString("hex")),
-    };
-  } finally {
-    decoded.free();
+    while (offset < data.length) {
+      const prefix = data[offset];
+      if (prefix === 0x02 || prefix === 0x03) {
+        nodes.push(
+          Buffer.from(data.subarray(offset, offset + 33)).toString("hex"),
+        );
+        offset += 33;
+      } else if (prefix === 0x00 || prefix === 0x01) {
+        offset += 9; // sciddir reference: no node pubkey
+      } else {
+        break;
+      }
+
+      offset += 33; // path_key
+      const numHops = data[offset];
+      offset += 1;
+      for (let hop = 0; hop < numHops; hop++) {
+        offset += 33; // blinded_node_id
+        const enclen = (data[offset] << 8) | data[offset + 1];
+        offset += 2 + enclen; // enclen field + encrypted_recipient_data
+      }
+    }
+  } catch {
+    // Best-effort: return whatever was parsed before hitting malformed data
   }
+
+  return nodes;
 };
 
-export const decodeBolt12 = async (invoice: string) => {
-  const { Invoice } = await import("boltz-bolt12");
-  const decoded = new Invoice(invoice);
+export const decodeOffer = async (offer: string): Promise<DecodedInvoice> => {
+  const {
+    decodeBolt12: decodeBolt12String,
+    parseTlvStream,
+    extractGeneratedOfferFields,
+  } = await import("bolt12-utils");
 
-  try {
-    return {
-      invoiceType: InvoiceType.Bolt12,
-      invoiceAmountSat: Number(decoded.amount_msat / 1_000n),
-      pubkeys: [
-        decoded.signing_pubkey,
-        ...decoded.payment_paths.map((path) => path.introduction_node),
-        ...decoded.message_paths.map((path) => path.introduction_node),
-      ]
-        .filter((p) => p !== undefined)
-        .map((p) => Buffer.from(p).toString("hex")),
-    };
-  } finally {
-    decoded.free();
-  }
+  const fields = extractGeneratedOfferFields(
+    parseTlvStream(decodeBolt12String(offer).data),
+  );
+
+  return {
+    invoiceType: InvoiceType.Offer,
+    pubkeys: [
+      ...(fields.offer_issuer_id !== undefined
+        ? [Buffer.from(fields.offer_issuer_id).toString("hex")]
+        : []),
+      ...blindedPathIntroductionNodes(fields.offer_paths),
+    ],
+  };
+};
+
+export const decodeBolt12 = async (
+  invoice: string,
+): Promise<DecodedInvoice> => {
+  const {
+    decodeBolt12: decodeBolt12String,
+    parseTlvStream,
+    extractInvoiceFields,
+  } = await import("bolt12-utils");
+
+  const fields = extractInvoiceFields(
+    parseTlvStream(decodeBolt12String(invoice).data),
+  );
+
+  return {
+    invoiceType: InvoiceType.Bolt12,
+    invoiceAmountSat:
+      fields.invoice_amount !== undefined
+        ? Number(fields.invoice_amount / 1_000n)
+        : undefined,
+    pubkeys: [
+      ...(fields.invoice_node_id !== undefined
+        ? [Buffer.from(fields.invoice_node_id).toString("hex")]
+        : []),
+      ...blindedPathIntroductionNodes(fields.invoice_paths),
+      ...blindedPathIntroductionNodes(fields.offer_paths),
+    ],
+  };
 };
 
 export const scidLndToCln = (s: string): string => {
