@@ -25,14 +25,14 @@ test.describe("Explorer flows against the production API", () => {
 
     // Node page.
     await expect(page).toHaveURL(/\/node\/[0-9a-f]{66}$/);
-    await expect(page.getByRole("heading", { name: /^Node:/ })).toBeVisible();
-    await expect(page.getByText(/^ID:/)).toBeVisible();
-    const channelsTable = page.getByRole("table");
-    await expect(channelsTable).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Copy node key" }),
+    ).toBeVisible();
 
-    // Follow a channel from the table.
+    // Channels load from the live API and render as a list of links.
     const channelLink = page.locator('a[href^="/channel/"]').first();
-    await expect(channelLink).toBeVisible();
+    await expect(channelLink).toBeVisible({ timeout: 30_000 });
     await channelLink.click();
 
     // Channel page.

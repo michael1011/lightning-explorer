@@ -60,23 +60,45 @@ describe("Node page", () => {
   it("renders the node alias, id and channel summary", () => {
     renderAtRoute("node/:node", <Node />, `/node/${nodeInfo.id}`);
 
-    expect(
-      screen.getByRole("heading", { name: "Node: ACINQ" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(`ID: ${nodeInfo.id}`)).toBeInTheDocument();
-    expect(screen.getByText("Channels: 2")).toBeInTheDocument();
-    expect(screen.getByText("Inactive: 1")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ACINQ" })).toBeInTheDocument();
+    expect(screen.getByText(nodeInfo.id)).toBeInTheDocument();
+    // Stat tiles.
+    expect(screen.getByText("Channels")).toBeInTheDocument();
     // Total capacity 21,777,215 sats.
-    expect(screen.getByText("Capacity: 0.21 777 215")).toBeInTheDocument();
+    expect(screen.getByText("0.21 777 215")).toBeInTheDocument();
+    // 1 of 2 channels active.
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.getByText("1 inactive")).toBeInTheDocument();
   });
 
-  it("renders a table row per channel", () => {
+  it("renders a row per channel", () => {
     renderAtRoute("node/:node", <Node />, `/node/${nodeInfo.id}`);
 
-    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("list")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("800000x1x0")).toBeInTheDocument();
     expect(screen.getByText("Peer One")).toBeInTheDocument();
-    expect(screen.getByText(channels[0].source.id)).toBeInTheDocument();
+    // Peer keys are middle-truncated.
+    expect(
+      screen.getByText(`03${"b".repeat(8)}...${"b".repeat(10)}`),
+    ).toBeInTheDocument();
+  });
+
+  it("scopes one accent variable per theme to the page", () => {
+    const { container } = renderAtRoute(
+      "node/:node",
+      <Node />,
+      `/node/${nodeInfo.id}`,
+    );
+
+    const scope = container.querySelector<HTMLElement>("[data-node-accent]");
+    expect(scope).not.toBeNull();
+    // White (#ffffff) reads on the night background but not on daylight,
+    // so only the dark variant keeps the broadcast color.
+    expect(scope!.style.getPropertyValue("--node-accent-dark")).toBe("#ffffff");
+    expect(scope!.style.getPropertyValue("--node-accent-light")).toBe(
+      "var(--volt)",
+    );
   });
 
   it("shows a fullscreen spinner while the node loads", () => {
@@ -93,7 +115,7 @@ describe("Node page", () => {
     );
 
     expect(container.querySelector(".animate-spin")).not.toBeNull();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
   });
 
   it("shows an inline spinner while channels load", () => {
@@ -111,11 +133,9 @@ describe("Node page", () => {
       `/node/${nodeInfo.id}`,
     );
 
-    expect(
-      screen.getByRole("heading", { name: "Node: ACINQ" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ACINQ" })).toBeInTheDocument();
     expect(container.querySelector(".animate-spin")).not.toBeNull();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
   });
 
   it("shows the error view when a request fails", () => {

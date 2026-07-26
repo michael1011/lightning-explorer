@@ -1,13 +1,7 @@
 import Landing from "./components/Landing";
 
 function App() {
-  return (
-    <>
-      <div className="container mx-auto">
-        <Landing />
-      </div>
-    </>
-  );
+  return <Landing />;
 }
 
 export default App;

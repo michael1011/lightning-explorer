@@ -58,12 +58,46 @@ describe("Channel page", () => {
   });
 
   it("renders a policy block for each direction", () => {
-    renderAtRoute("channel/:channel", <Channel />, "/channel/800000x1x0");
+    const { container } = renderAtRoute(
+      "channel/:channel",
+      <Channel />,
+      "/channel/800000x1x0",
+    );
 
     expect(screen.getByText(/Alice/)).toBeInTheDocument();
     expect(screen.getByText(/Bob/)).toBeInTheDocument();
     expect(screen.getByText("Fee PPM: 200")).toBeInTheDocument();
     expect(screen.getByText("Fee PPM: 50")).toBeInTheDocument();
+    // Bob's side is inactive, and one arrow separates the two directions.
+    expect(screen.getByText("inactive")).toBeInTheDocument();
+    expect(
+      container.querySelectorAll("svg.lucide-arrow-left-right"),
+    ).toHaveLength(1);
+  });
+
+  it("renders a response with a single policy without crashing", () => {
+    // The API types promise two policies, but the page must not white-screen
+    // if only one side is present.
+    mockSWR.mockReturnValue({
+      data: {
+        ...channelInfo,
+        policies: [policy(`02${"a".repeat(64)}`, "Alice", true, 200)],
+      },
+      error: undefined,
+      isLoading: false,
+    } as never);
+
+    const { container } = renderAtRoute(
+      "channel/:channel",
+      <Channel />,
+      "/channel/800000x1x0",
+    );
+
+    expect(screen.getByText(/Alice/)).toBeInTheDocument();
+    // No separator arrow when there is nothing to separate.
+    expect(
+      container.querySelectorAll("svg.lucide-arrow-left-right"),
+    ).toHaveLength(0);
   });
 
   it("shows a fullscreen spinner while loading", () => {

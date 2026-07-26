@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bolt11Features,
+  chainName,
   cn,
   convertChannelid,
   decodeBolt11,
@@ -8,6 +10,8 @@ import {
   decodeInvoice,
   decodeOffer,
   fetcher,
+  formatDuration,
+  formatUnix,
   isChannelId,
   isInvoice,
   isLnurl,
@@ -17,8 +21,12 @@ import {
   satoshisToSatcomma,
   scidClnToLnd,
   scidLndToCln,
+  toHex,
+  toUtf8,
   trimLongString,
 } from "./utils";
+
+const bytesFromHex = (hex: string) => Uint8Array.from(Buffer.from(hex, "hex"));
 
 // InvoiceType is a `const enum`; assert against its literal string values
 // rather than importing the enum member (it has no reliable runtime object).
@@ -214,75 +222,198 @@ describe("short channel id conversion", () => {
 });
 
 describe("decodeBolt11", () => {
-  it("extracts amount and payee node key", async () => {
+  it("separates the payee signer from routing and exposes all fields", async () => {
     const decoded = await decodeBolt11(COFFEE_INVOICE);
     expect(decoded.invoiceType).toBe(BOLT11);
     expect(decoded.invoiceAmountSat).toBe(250_000);
-    expect(decoded.pubkeys).toContain(COFFEE_PAYEE);
-    decoded.pubkeys.forEach((pk) => expect(isPubkey(pk)).toBe(true));
+    // The signer (payee) is reported on its own, not mixed into routing.
+    expect(decoded.signer).toBe(COFFEE_PAYEE);
+    expect(isPubkey(decoded.signer!)).toBe(true);
+    expect(decoded.routingNodes).toEqual([]);
+    // Non-node fields are surfaced.
+    const labels = decoded.fields.map((f) => f.label);
+    expect(labels).toContain("Payment hash");
+    expect(labels).toContain("Description");
   });
 });
 
 describe("decodeOffer", () => {
-  it("extracts the issuer id from a minimal offer", async () => {
+  it("reports the issuer id as signer for a minimal offer", async () => {
     const decoded = await decodeOffer(OFFER_MINIMAL);
     expect(decoded.invoiceType).toBe(OFFER);
-    expect(decoded.pubkeys).toEqual([OFFER_ISSUER_ID]);
+    expect(decoded.signer).toBe(OFFER_ISSUER_ID);
+    expect(decoded.routingNodes).toEqual([]);
     expect(decoded.invoiceAmountSat).toBeUndefined();
   });
 
-  it("extracts issuer id and blinded-path introduction node", async () => {
+  it("keeps the issuer as signer and the blinded-path intro as routing", async () => {
     const decoded = await decodeOffer(OFFER_WITH_PATH);
-    expect(decoded.pubkeys).toEqual([OFFER_ISSUER_ID, OFFER_PATH_INTRO]);
+    expect(decoded.signer).toBe(OFFER_ISSUER_ID);
+    expect(decoded.routingNodes).toEqual([OFFER_PATH_INTRO]);
   });
 
-  it("extracts only the introduction node when there is no issuer id", async () => {
+  it("has no signer when the offer omits the issuer id", async () => {
     const decoded = await decodeOffer(OFFER_NO_ISSUER_WITH_PATH);
-    expect(decoded.pubkeys).toEqual([OFFER_PATH_INTRO]);
+    expect(decoded.signer).toBeUndefined();
+    expect(decoded.routingNodes).toEqual([OFFER_PATH_INTRO]);
   });
 
   it("skips blinded paths whose first_node_id is a short_channel_id (sciddir)", async () => {
     const decoded = await decodeOffer(OFFER_SCIDDIR_PATH);
-    expect(decoded.pubkeys).toEqual([OFFER_ISSUER_ID]);
+    expect(decoded.signer).toBe(OFFER_ISSUER_ID);
+    expect(decoded.routingNodes).toEqual([]);
   });
 
   it("handles multiple paths mixing pubkey and sciddir first_node_ids", async () => {
     const decoded = await decodeOffer(OFFER_MIXED_PATHS);
-    expect(decoded.pubkeys).toEqual([OFFER_ISSUER_ID, OFFER_PATH_INTRO]);
+    expect(decoded.signer).toBe(OFFER_ISSUER_ID);
+    expect(decoded.routingNodes).toEqual([OFFER_PATH_INTRO]);
   });
 });
 
 describe("decodeBolt12 (invoice)", () => {
-  it("extracts node id and converts the amount from msat to sat", async () => {
+  it("reports node id as signer and converts the amount msat -> sat", async () => {
     const decoded = await decodeBolt12(BOLT12_INVOICE);
     expect(decoded.invoiceType).toBe(BOLT12);
     expect(decoded.invoiceAmountSat).toBe(76);
-    expect(decoded.pubkeys).toContain(BOLT12_INVOICE_NODE_ID);
-    decoded.pubkeys.forEach((pk) => expect(isPubkey(pk)).toBe(true));
+    expect(decoded.signer).toBe(BOLT12_INVOICE_NODE_ID);
+    // Before dispatcher dedup, the single blinded path's intro equals the signer.
+    expect(decoded.routingNodes).toContain(BOLT12_INVOICE_NODE_ID);
   });
 });
 
 describe("decodeInvoice", () => {
-  it("dispatches to the BOLT11 decoder and returns deduplicated pubkeys", async () => {
+  it("dispatches to the BOLT11 decoder and reports the signer", async () => {
     const decoded = await decodeInvoice(BOLT11 as never, COFFEE_INVOICE);
     expect(decoded.invoiceType).toBe(BOLT11);
     expect(decoded.invoiceAmountSat).toBe(250_000);
-    expect(new Set(decoded.pubkeys).size).toBe(decoded.pubkeys.length);
+    expect(decoded.signer).toBe(COFFEE_PAYEE);
   });
 
-  it("deduplicates pubkeys emitted more than once by the decoder", async () => {
+  it("drops the signer (and duplicates) from the routing nodes", async () => {
     const raw = await decodeBolt12(BOLT12_INVOICE);
-    expect(raw.pubkeys.length).toBeGreaterThan(1); // decoder yields a duplicate
+    expect(raw.routingNodes).toContain(BOLT12_INVOICE_NODE_ID);
     const decoded = await decodeInvoice(BOLT12 as never, BOLT12_INVOICE);
-    expect(decoded.pubkeys).toEqual([BOLT12_INVOICE_NODE_ID]);
+    expect(decoded.signer).toBe(BOLT12_INVOICE_NODE_ID);
+    // The only introduction node was the signer, so routing is now empty.
+    expect(decoded.routingNodes).toEqual([]);
     expect(decoded.invoiceAmountSat).toBe(76);
   });
 
-  it("dispatches to the offer decoder and deduplicates pubkeys", async () => {
+  it("dispatches to the offer decoder, separating signer and routing", async () => {
     const decoded = await decodeInvoice(OFFER as never, OFFER_WITH_PATH);
     expect(decoded.invoiceType).toBe(OFFER);
-    expect(decoded.pubkeys).toEqual([OFFER_ISSUER_ID, OFFER_PATH_INTRO]);
-    expect(new Set(decoded.pubkeys).size).toBe(decoded.pubkeys.length);
+    expect(decoded.signer).toBe(OFFER_ISSUER_ID);
+    expect(decoded.routingNodes).toEqual([OFFER_PATH_INTRO]);
+  });
+});
+
+describe("decoded invoice fields", () => {
+  it("formats every field encoded in a rich BOLT12 invoice", async () => {
+    const decoded = await decodeBolt12(BOLT12_INVOICE);
+    const byLabel = Object.fromEntries(
+      decoded.fields.map((f) => [f.label, f.value]),
+    );
+    expect(byLabel["Description"]).toBe(
+      "OCEAN Payouts for bc1qx84l47fj5grg0872p7fz8a73mwtq4csf64stme",
+    );
+    expect(byLabel["Created"]).toBe("2025-06-23 19:11:55 UTC");
+    expect(byLabel["Payment hash"]).toBe(
+      "b88302b7936b4af70435024b8445e203f9679436b43ea660b9a640908a50812c",
+    );
+    expect(byLabel["Payer key"]).toBe(
+      "0341734861d02d0dbe2e9679f0bb988ecc6ee5947438454e9949fd71f41e6bfae1",
+    );
+    expect(byLabel["Features"]).toBe("020000");
+  });
+});
+
+describe("formatUnix", () => {
+  it("formats a unix timestamp (number or bigint) as a UTC string", () => {
+    expect(formatUnix(0n)).toBe("1970-01-01 00:00:00 UTC");
+    expect(formatUnix(1_000_000_000)).toBe("2001-09-09 01:46:40 UTC");
+  });
+
+  it("truncates fractional seconds instead of leaving a stray suffix", () => {
+    expect(formatUnix(1.5)).toBe("1970-01-01 00:00:01 UTC");
+  });
+});
+
+describe("formatDuration", () => {
+  it.each([
+    [0, "0s"],
+    [45, "45s"],
+    [60, "1m"],
+    [3600, "1h"],
+    [90_000, "1d 1h"],
+    [93_784, "1d 2h 3m 4s"],
+  ])("formats %d seconds as %s", (secs, expected) => {
+    expect(formatDuration(secs)).toBe(expected);
+  });
+
+  it("accepts bigint input", () => {
+    expect(formatDuration(3661n)).toBe("1h 1m 1s");
+  });
+});
+
+describe("chainName", () => {
+  it("maps known chain hashes to human names", () => {
+    expect(
+      chainName(
+        bytesFromHex(
+          "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000",
+        ),
+      ),
+    ).toBe("bitcoin");
+    expect(
+      chainName(
+        bytesFromHex(
+          "43497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000",
+        ),
+      ),
+    ).toBe("testnet");
+  });
+
+  it("falls back to hex for an unknown chain", () => {
+    const hex = "00".repeat(32);
+    expect(chainName(bytesFromHex(hex))).toBe(hex);
+  });
+});
+
+describe("bolt11Features", () => {
+  it("lists the enabled feature names in order", () => {
+    expect(
+      bolt11Features({
+        word_length: 5,
+        var_onion_optin: { supported: true },
+        payment_secret: { required: true },
+      }),
+    ).toBe("var_onion_optin, payment_secret");
+  });
+
+  it("ignores metadata keys and unset flags", () => {
+    expect(
+      bolt11Features({
+        word_length: 5,
+        extra_bits: {},
+        basic_mpp: { supported: false },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when there are no feature bits", () => {
+    expect(bolt11Features(undefined)).toBeUndefined();
+  });
+});
+
+describe("toHex / toUtf8", () => {
+  it("hex-encodes bytes or returns undefined", () => {
+    expect(toHex(Uint8Array.from([1, 255]))).toBe("01ff");
+    expect(toHex(undefined)).toBeUndefined();
+  });
+
+  it("utf8-decodes bytes", () => {
+    expect(toUtf8(bytesFromHex("6269703335"))).toBe("bip35");
   });
 });
 

@@ -92,10 +92,69 @@ describe("Search page", () => {
 
     renderSearch(OFFER);
 
+    // The decoded view titles with the invoice type and labels the signer.
     expect(
-      await screen.findByText("Invoice type: BOLT12 offer"),
+      await screen.findByRole("heading", { name: "BOLT12 offer" }),
     ).toBeInTheDocument();
+    expect(await screen.findByText("Offer issuer")).toBeInTheDocument();
     expect(await screen.findByText("Offer Node")).toBeInTheDocument();
+  });
+
+  it("shows a loading placeholder, not 'not found', while lookups are pending", async () => {
+    // Node lookups that never settle: the card must not claim the node is
+    // missing from the graph before the request has actually finished.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL): Promise<Response> => {
+        if (String(input).includes("/node/")) {
+          return new Promise<Response>(() => {});
+        }
+        throw new Error(`unexpected fetch: ${String(input)}`);
+      }),
+    );
+
+    renderSearch(OFFER);
+
+    expect(
+      await screen.findByRole("heading", { name: "BOLT12 offer" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Offer issuer")).toBeInTheDocument();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByText("Unknown node")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Not found in the public graph"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("separates the issuer from unresolved blinded-path routing nodes", async () => {
+    // Offer with an issuer id (signer) plus one blinded-path introduction node.
+    const OFFER_WITH_PATH =
+      "lno1pgx9getnwss8vetrw3hhyucs5ypjgef743p5fzqq9nqxh0ah7y87rzv3ud0eleps9kl2d5348hq2k8qzqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgqpqqqqqqqqqqqqqqqqqqqqqqqqqqqzqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqqzq3zyg3zyg3zyg3vggzamrjghtt05kvkvpcp0a79gmy3nt6jsn98ad2xs8de6sl9qmgvcvs";
+    const INTRO =
+      "0324653eac434488002cc06bbfb7f10fe18991e35f9fe4302dbea6d2353dc0ab1c";
+    vi.stubGlobal(
+      "fetch",
+      routeFetch([
+        [
+          `/node/${OFFER_ISSUER_ID}`,
+          {
+            body: { alias: "Issuer Node", color: "#0f0", id: OFFER_ISSUER_ID },
+          },
+        ],
+        // The introduction node is not in the public graph.
+        [`/node/${INTRO}`, { ok: false, statusText: "not found", body: {} }],
+      ]),
+    );
+
+    renderSearch(OFFER_WITH_PATH);
+
+    expect(await screen.findByText("Issuer Node")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Blinded path introduction nodes"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("Not found in the public graph"),
+    ).toBeInTheDocument();
   });
 
   it("shows the error view when the search request fails", async () => {

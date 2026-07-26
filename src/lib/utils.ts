@@ -11,9 +11,19 @@ export const enum InvoiceType {
   Bolt12 = "BOLT12 invoice",
 }
 
+export type DecodedField = {
+  label: string;
+  value: string;
+};
+
 export type DecodedInvoice = {
   invoiceType: InvoiceType;
-  pubkeys: string[];
+  // The node that signed the invoice/offer, kept separate from routing info.
+  signer?: string;
+  // Routing hints (BOLT11) or blinded-path introduction nodes (BOLT12).
+  routingNodes: string[];
+  // Every other field encoded in the invoice/offer, formatted for display.
+  fields: DecodedField[];
   invoiceAmountSat?: number;
 };
 
@@ -87,6 +97,87 @@ export const isInvoice = (invoice: string): InvoiceType | undefined => {
   return undefined;
 };
 
+// A field is only emitted when it carries a value.
+const field = (
+  label: string,
+  value: string | number | bigint | undefined | null,
+): DecodedField | undefined =>
+  value === undefined || value === null || value === ""
+    ? undefined
+    : { label, value: String(value) };
+
+const collectFields = (entries: (DecodedField | undefined)[]): DecodedField[] =>
+  entries.filter((entry): entry is DecodedField => entry !== undefined);
+
+// The formatting helpers below are pure and exported so they can be unit-tested
+// directly — real invoice vectors rarely populate every optional field.
+export const toHex = (bytes?: Uint8Array): string | undefined =>
+  bytes === undefined ? undefined : Buffer.from(bytes).toString("hex");
+
+export const toUtf8 = (bytes: Uint8Array): string =>
+  new TextDecoder().decode(bytes);
+
+export const formatUnix = (seconds: bigint | number): string =>
+  // Slice off the milliseconds instead of matching ".000Z", which would leave
+  // a stray "Z" if a fractional timestamp ever slipped through.
+  `${new Date(Number(seconds) * 1000).toISOString().slice(0, 19).replace("T", " ")} UTC`;
+
+export const formatDuration = (seconds: bigint | number): string => {
+  let remaining = Number(seconds);
+  const parts: string[] = [];
+  for (const [size, suffix] of [
+    [86400, "d"],
+    [3600, "h"],
+    [60, "m"],
+    [1, "s"],
+  ] as const) {
+    const count = Math.floor(remaining / size);
+    if (count > 0) {
+      parts.push(`${count}${suffix}`);
+    }
+    remaining -= count * size;
+  }
+  return parts.length > 0 ? parts.join(" ") : "0s";
+};
+
+// BOLT chain hashes (genesis block hash, internal byte order).
+const CHAIN_NAMES: Record<string, string> = {
+  "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000": "bitcoin",
+  "43497fd7f826957108f4a30fd9cec3aeba79972084e90ead01ea330900000000": "testnet",
+};
+
+export const chainName = (bytes: Uint8Array): string => {
+  const hex = Buffer.from(bytes).toString("hex");
+  return CHAIN_NAMES[hex] ?? hex;
+};
+
+const NETWORK_NAMES: Record<string, string> = {
+  bc: "bitcoin",
+  tb: "testnet",
+  bcrt: "regtest",
+  tbs: "signet",
+};
+
+type FeatureFlag = { required?: boolean; supported?: boolean };
+
+export const bolt11Features = (
+  featureBits: Record<string, unknown> | undefined,
+): string | undefined => {
+  if (featureBits === undefined) {
+    return undefined;
+  }
+  const names = Object.entries(featureBits)
+    .filter(([key]) => key !== "word_length" && key !== "extra_bits")
+    .filter(([, value]) => {
+      const flag = value as FeatureFlag;
+      return (
+        Boolean(flag) && (flag.required === true || flag.supported === true)
+      );
+    })
+    .map(([key]) => key);
+  return names.length > 0 ? names.join(", ") : undefined;
+};
+
 export const decodeInvoice = async (
   invoiceType: InvoiceType,
   invoice: string,
@@ -105,12 +196,13 @@ export const decodeInvoice = async (
       break;
   }
 
-  return {
-    invoiceType,
-    // Deduplicate the pubkeys in the result
-    pubkeys: [...new Set(res.pubkeys)],
-    invoiceAmountSat: res.invoiceAmountSat,
-  };
+  // Deduplicate routing nodes, and drop any that is also the signer (e.g. a
+  // single blinded path leading back to the payee) so the two are cleanly split.
+  const routingNodes = [...new Set(res.routingNodes)].filter(
+    (pubkey) => pubkey !== res.signer,
+  );
+
+  return { ...res, routingNodes };
 };
 
 export const decodeBolt11 = async (
@@ -118,14 +210,51 @@ export const decodeBolt11 = async (
 ): Promise<DecodedInvoice> => {
   const bolt11 = await import("@atomiqlabs/bolt11");
   const decoded = bolt11.decode(invoice);
+  const tags = decoded.tagsObject;
+
+  // Routing hints and any blinded-path introduction nodes — not the signer.
+  const routingNodes = [
+    ...(tags.routing_info?.map((hop) => hop.pubkey) ?? []),
+    ...(tags.blinded_payinfo
+      ?.map((path) => path.introduction_node)
+      .filter((node): node is string => Boolean(node)) ?? []),
+  ];
+
+  const fields = collectFields([
+    field(
+      "Network",
+      decoded.network
+        ? (NETWORK_NAMES[decoded.network.bech32] ?? decoded.network.bech32)
+        : undefined,
+    ),
+    field("Description", tags.description),
+    field("Payment hash", tags.payment_hash),
+    field("Payment secret", tags.payment_secret),
+    decoded.timestamp !== undefined
+      ? field("Created", formatUnix(decoded.timestamp))
+      : undefined,
+    tags.expire_time !== undefined
+      ? field("Expiry", formatDuration(tags.expire_time))
+      : undefined,
+    field("Min final CLTV", tags.min_final_cltv_expiry),
+    field("Fallback address", tags.fallback_address?.address),
+    field(
+      "Features",
+      bolt11Features(
+        tags.feature_bits as unknown as Record<string, unknown> | undefined,
+      ),
+    ),
+    tags.routing_info?.length
+      ? field("Routing hints", tags.routing_info.length)
+      : undefined,
+  ]);
 
   return {
     invoiceType: InvoiceType.Bolt11,
+    signer: decoded.payeeNodeKey,
+    routingNodes,
+    fields,
     invoiceAmountSat: decoded.satoshis ?? undefined,
-    pubkeys: [
-      decoded.payeeNodeKey,
-      ...(decoded.tagsObject.routing_info?.map((r) => r.pubkey) ?? []),
-    ].filter((p): p is string => p !== undefined),
   };
 };
 
@@ -182,18 +311,45 @@ export const decodeOffer = async (offer: string): Promise<DecodedInvoice> => {
     extractGeneratedOfferFields,
   } = await import("bolt12-utils");
 
-  const fields = extractGeneratedOfferFields(
+  const offerFields = extractGeneratedOfferFields(
     parseTlvStream(decodeBolt12String(offer).data),
   );
 
+  const fields = collectFields([
+    field("Description", offerFields.offer_description),
+    field("Issuer", offerFields.offer_issuer),
+    offerFields.offer_amount !== undefined
+      ? field(
+          "Amount",
+          offerFields.offer_currency
+            ? `${offerFields.offer_amount} ${offerFields.offer_currency}`
+            : `${satoshisToSatcomma(Number(offerFields.offer_amount / 1_000n))} BTC`,
+        )
+      : undefined,
+    field("Currency", offerFields.offer_currency),
+    offerFields.offer_chains?.length
+      ? field("Chains", offerFields.offer_chains.map(chainName).join(", "))
+      : undefined,
+    offerFields.offer_quantity_max !== undefined
+      ? field(
+          "Max quantity",
+          offerFields.offer_quantity_max === 0n
+            ? "unlimited"
+            : offerFields.offer_quantity_max,
+        )
+      : undefined,
+    offerFields.offer_absolute_expiry !== undefined
+      ? field("Expires at", formatUnix(offerFields.offer_absolute_expiry))
+      : undefined,
+    field("Metadata", toHex(offerFields.offer_metadata)),
+    field("Features", toHex(offerFields.offer_features)),
+  ]);
+
   return {
     invoiceType: InvoiceType.Offer,
-    pubkeys: [
-      ...(fields.offer_issuer_id !== undefined
-        ? [Buffer.from(fields.offer_issuer_id).toString("hex")]
-        : []),
-      ...blindedPathIntroductionNodes(fields.offer_paths),
-    ],
+    signer: toHex(offerFields.offer_issuer_id),
+    routingNodes: blindedPathIntroductionNodes(offerFields.offer_paths),
+    fields,
   };
 };
 
@@ -206,23 +362,54 @@ export const decodeBolt12 = async (
     extractInvoiceFields,
   } = await import("bolt12-utils");
 
-  const fields = extractInvoiceFields(
+  const invoiceFields = extractInvoiceFields(
     parseTlvStream(decodeBolt12String(invoice).data),
   );
 
+  const invoiceAmountSat =
+    invoiceFields.invoice_amount !== undefined
+      ? Number(invoiceFields.invoice_amount / 1_000n)
+      : undefined;
+
+  const fields = collectFields([
+    field("Description", invoiceFields.offer_description),
+    field("Issuer", invoiceFields.offer_issuer),
+    invoiceFields.invoice_created_at !== undefined
+      ? field("Created", formatUnix(invoiceFields.invoice_created_at))
+      : undefined,
+    invoiceFields.invoice_relative_expiry !== undefined
+      ? field("Expiry", formatDuration(invoiceFields.invoice_relative_expiry))
+      : undefined,
+    field("Payment hash", toHex(invoiceFields.invoice_payment_hash)),
+    field("Payer note", invoiceFields.invreq_payer_note),
+    field("Payer key", toHex(invoiceFields.invreq_payer_id)),
+    invoiceFields.invreq_quantity !== undefined
+      ? field("Quantity", invoiceFields.invreq_quantity)
+      : undefined,
+    invoiceFields.invreq_bip_353_name !== undefined
+      ? field(
+          "BIP-353",
+          `${toUtf8(invoiceFields.invreq_bip_353_name.name)}@${toUtf8(
+            invoiceFields.invreq_bip_353_name.domain,
+          )}`,
+        )
+      : undefined,
+    invoiceFields.offer_chains?.length
+      ? field("Chains", invoiceFields.offer_chains.map(chainName).join(", "))
+      : undefined,
+    field("Features", toHex(invoiceFields.invoice_features)),
+    field("Fallbacks", toHex(invoiceFields.invoice_fallbacks)),
+  ]);
+
   return {
     invoiceType: InvoiceType.Bolt12,
-    invoiceAmountSat:
-      fields.invoice_amount !== undefined
-        ? Number(fields.invoice_amount / 1_000n)
-        : undefined,
-    pubkeys: [
-      ...(fields.invoice_node_id !== undefined
-        ? [Buffer.from(fields.invoice_node_id).toString("hex")]
-        : []),
-      ...blindedPathIntroductionNodes(fields.invoice_paths),
-      ...blindedPathIntroductionNodes(fields.offer_paths),
+    signer: toHex(invoiceFields.invoice_node_id),
+    routingNodes: [
+      ...blindedPathIntroductionNodes(invoiceFields.invoice_paths),
+      ...blindedPathIntroductionNodes(invoiceFields.offer_paths),
     ],
+    fields,
+    invoiceAmountSat,
   };
 };
 

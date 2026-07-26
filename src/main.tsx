@@ -6,6 +6,8 @@ import Resolver from "@/components/Resolver";
 import Search from "@/components/Search";
 import { ThemeProvider } from "@/components/theme-provider";
 import { fetcher } from "@/lib/utils";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router";

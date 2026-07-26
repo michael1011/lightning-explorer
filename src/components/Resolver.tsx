@@ -1,4 +1,5 @@
 import { bech32, utf8 } from "@scure/base";
+import { AtSign, Link2 } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router";
 import useSWR from "swr";
@@ -10,7 +11,6 @@ import Error from "./Error";
 import Header from "./Header";
 import LoadingSpinner, { LoadingSpinnerFullscreen } from "./LoadingSpinner";
 import { Button } from "./ui/button";
-import { Card, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 
 const enum InfoType {
@@ -149,41 +149,56 @@ const InfoCard = ({ type, properties }: Info) => {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{type}</CardTitle>
-        <CardDescription>
-          {Object.entries(properties)
-            .filter(([, value]) => typeof value !== "object")
-            .map(([key, value]) => (
-              <p key={key}>
-                {key}: {value}
-              </p>
-            ))}
-          <div className="flex flex-row justify-center mt-4 gap-2">
-            <Input
-              type="number"
-              onChange={(e) => setAmount(Number(e.target.value))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  fetchInvoice();
-                }
-              }}
-            />
-            <Button disabled={amount === 0 || fetching} onClick={fetchInvoice}>
-              Fetch
-            </Button>
-          </div>
-          {fetching && (
-            <div className="flex flex-row justify-center mt-4">
-              <LoadingSpinner />
-            </div>
+    <div className="border-border bg-card rounded-2xl border p-5">
+      <div className="flex items-center gap-2">
+        <span className="text-node-accent grid size-7 place-items-center rounded-md bg-[color-mix(in_oklab,var(--node-accent)_18%,transparent)]">
+          {type === InfoType.LNURL ? (
+            <Link2 className="size-4" />
+          ) : (
+            <AtSign className="size-4" />
           )}
-          {invoice && <p className="mt-4">{invoice}</p>}
-          {error && <p className="mt-4 text-red-500 text-center">{error}</p>}
-        </CardDescription>
-      </CardHeader>
-    </Card>
+        </span>
+        <h2 className="text-lg font-semibold">{type}</h2>
+      </div>
+
+      <div className="text-muted-foreground mt-3 flex flex-col gap-1 font-mono text-sm break-all">
+        {Object.entries(properties)
+          .filter(([, value]) => typeof value !== "object")
+          .map(([key, value]) => (
+            <p key={key}>
+              {key}: {value}
+            </p>
+          ))}
+      </div>
+
+      <div className="mt-4 flex flex-row gap-2">
+        <Input
+          type="number"
+          placeholder="Amount (sats)"
+          onChange={(e) => setAmount(Number(e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              fetchInvoice();
+            }
+          }}
+        />
+        <Button disabled={amount === 0 || fetching} onClick={fetchInvoice}>
+          Fetch
+        </Button>
+      </div>
+
+      {fetching && (
+        <div className="mt-4 flex justify-center">
+          <LoadingSpinner />
+        </div>
+      )}
+      {invoice && (
+        <p className="bg-secondary/50 mt-4 rounded-lg p-3 font-mono text-sm break-all">
+          {invoice}
+        </p>
+      )}
+      {error && <p className="text-destructive mt-4 text-center">{error}</p>}
+    </div>
   );
 };
 
@@ -224,10 +239,18 @@ const Resolver = () => {
   return (
     <>
       <Header />
-      <div className="flex flex-col items-center justify-center">
-        <h1>Resolving: {trimLongString(decodedInput!)}</h1>
-        <div className="w-full max-w-xl mt-10 break-all flex flex-col gap-4">
-          {info.data!.length === 0 && <h2>No info found</h2>}
+      <main className="mx-auto flex max-w-xl flex-col items-center px-4 pt-12 pb-16">
+        <span className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+          Resolve
+        </span>
+        <h1 className="mt-2 text-center break-all">
+          Resolving: {trimLongString(decodedInput!)}
+        </h1>
+
+        <div className="mt-8 flex w-full flex-col gap-4">
+          {info.data!.length === 0 && (
+            <h2 className="text-muted-foreground text-center">No info found</h2>
+          )}
           {info.data!.map((info) => (
             <InfoCard
               key={info.type}
@@ -236,7 +259,7 @@ const Resolver = () => {
             />
           ))}
         </div>
-      </div>
+      </main>
     </>
   );
 };

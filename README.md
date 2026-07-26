@@ -1,54 +1,39 @@
-# React + TypeScript + Vite
+# Lightning Explorer
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A web explorer for the Bitcoin Lightning Network, backed by the [Boltz](https://boltz.exchange) API.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Search** nodes by alias, pubkey, or channel ID
+- **Inspect** node details and their channels
+- **Decode** BOLT11 invoices and BOLT12 offers/invoices, then jump to the nodes behind them
+- **Resolve** Lightning Addresses (LNURL) and [BIP-353](https://github.com/bitcoin/bips/blob/master/bip-0353.mediawiki) names (DNSSEC-verified in-browser) and fetch invoices from them
 
-## Expanding the ESLint configuration
+## Development
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Requires Node.js 22+.
 
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-})
+```sh
+npm install
+npm run dev      # start the dev server
+npm run build    # type-check and build for production
+npm run preview  # serve the production build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Testing
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-})
+```sh
+npm run test          # unit tests (Vitest)
+npm run test:coverage # unit tests with coverage
+npm run test:e2e      # end-to-end tests (Playwright, hits the production API)
 ```
+
+## Configuration
+
+All optional, set via environment variables (e.g. in a `.env` file):
+
+| Variable              | Default                       | Description                     |
+| --------------------- | ----------------------------- | ------------------------------- |
+| `VITE_API_URL`        | `https://api.boltz.exchange`  | Boltz API endpoint              |
+| `VITE_CURRENCY`       | `BTC`                         | Currency to query               |
+| `VITE_DNS_OVER_HTTPS` | `https://1.1.1.1/dns-query`   | DNS-over-HTTPS resolver for BIP-353 |

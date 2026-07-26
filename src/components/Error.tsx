@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react";
+import { Link } from "react-router";
 
 import Header from "./Header";
 
@@ -14,13 +15,20 @@ export default function Error({ error }: { error: unknown }) {
   return (
     <>
       <Header />
-      <div className="flex flex-col items-center justify-center m-10">
-        <div className="flex items-center justify-center gap-2">
-          <AlertTriangle className="w-10 h-10" />
-          <h1>Error</h1>
-        </div>
-        <p>{errorToString(error)}</p>
-      </div>
+      <main className="mx-auto flex max-w-xl flex-col items-center px-4 pt-24 text-center">
+        <span className="text-destructive bg-destructive/10 grid size-14 place-items-center rounded-2xl">
+          <AlertTriangle className="size-7" />
+        </span>
+        <h1 className="mt-5">Error</h1>
+        <p className="text-muted-foreground mt-3 font-mono text-sm break-all">
+          {errorToString(error)}
+        </p>
+        <Link
+          to="/"
+          className="text-node-accent mt-6 text-sm font-medium hover:underline">
+          Back to search
+        </Link>
+      </main>
     </>
   );
 }

@@ -1,17 +1,10 @@
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { useState } from "react";
+import { nodeSwatch } from "@/lib/color";
 import { Link, useParams } from "react-router";
 import useSWR from "swr";
 
-import { CURRENCY } from "../lib/env";
-import { API_URL } from "../lib/env";
+import { API_URL, CURRENCY } from "../lib/env";
+import type { DecodedField, DecodedInvoice, InvoiceType } from "../lib/utils";
 import {
-  DecodedInvoice,
   decodeInvoice,
   fetcher,
   isInvoice,
@@ -23,6 +16,8 @@ import Header from "./Header";
 import { LoadingSpinnerFullscreen } from "./LoadingSpinner";
 import type { Channel, NodeInfo } from "./Node";
 
+// -- Alias search ----------------------------------------------------------
+
 function SearchResult({
   nodeInfo,
   channels,
@@ -30,84 +25,43 @@ function SearchResult({
   nodeInfo: NodeInfo;
   channels: Channel[] | undefined;
 }) {
+  const capacity = channels?.reduce((acc, c) => acc + c.capacity, 0) ?? 0;
+
   return (
-    <div className="mt-4">
-      <Link to={`/node/${nodeInfo.id}`}>
-        <Card className="cursor-pointer shadow-none hover:shadow-sm shadow-yellow-500/50 transition duration-300">
-          <CardHeader>
-            <CardTitle>{nodeInfo.alias}</CardTitle>
-            <CardDescription>{trimLongString(nodeInfo.id)}</CardDescription>
-            <CardDescription>
-              {channels !== undefined ? (
-                <>
-                  <p>Channels: {channels.length}</p>
-                  <p>
-                    Capacity:{" "}
-                    {satoshisToSatcomma(
-                      channels.reduce(
-                        (acc, channel) => acc + channel.capacity,
-                        0,
-                      ),
-                    )}
-                  </p>
-                </>
-              ) : (
-                <p>Loading...</p>
-              )}
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </Link>
-    </div>
+    <Link
+      to={`/node/${nodeInfo.id}`}
+      className="border-border/60 bg-card/40 hover:border-border hover:bg-card/70 block rounded-xl border p-4 transition-colors">
+      <div className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className="size-2.5 shrink-0 rounded-full ring-1 ring-inset ring-black/20"
+          style={{ background: nodeSwatch(nodeInfo.color) }}
+        />
+        <span className="truncate font-semibold">{nodeInfo.alias}</span>
+      </div>
+      <p className="text-muted-foreground mt-1 font-mono text-xs">
+        {trimLongString(nodeInfo.id)}
+      </p>
+      <div className="text-muted-foreground mt-3 flex gap-5 font-mono text-sm">
+        {channels !== undefined ? (
+          <>
+            <span>Channels: {channels.length}</span>
+            <span>Capacity: {satoshisToSatcomma(capacity)}</span>
+          </>
+        ) : (
+          <span>Loading…</span>
+        )}
+      </div>
+    </Link>
   );
 }
 
-function InvoiceInfo({ decoded }: { decoded: DecodedInvoice }) {
-  return (
-    <div className="flex flex-row justify-between gap-4 mt-1">
-      <p>Invoice type: {decoded.invoiceType}</p>
-      {decoded.invoiceAmountSat && (
-        <p>Amount: {satoshisToSatcomma(decoded.invoiceAmountSat)}</p>
-      )}
-    </div>
-  );
-}
-
-export default function Search() {
-  const { query } = useParams();
-  const [decodedInvoice, setDecodedInvoice] = useState<
-    DecodedInvoice | undefined
-  >(undefined);
+function AliasSearchView({ query }: { query: string }) {
   const nodeInfo = useSWR<NodeInfo[]>(
     `${API_URL}/v2/lightning/${CURRENCY}/search?${new URLSearchParams({
-      alias: query!,
+      alias: query,
     })}`,
-    async (url: string) => {
-      const invoiceType = isInvoice(query!);
-      if (invoiceType !== undefined) {
-        const decoded = await decodeInvoice(invoiceType, query!);
-        setDecodedInvoice(decoded);
-        const nodes = await Promise.allSettled(
-          decoded.pubkeys.map(async (pubkey) => {
-            return await fetcher<NodeInfo>(
-              `${API_URL}/v2/lightning/${CURRENCY}/node/${pubkey}`,
-            );
-          }),
-        );
-        if (nodes.every((node) => node.status === "rejected")) {
-          throw nodes.map((node) => node.reason).join(", ");
-        }
-
-        return nodes
-          .filter(
-            (node): node is PromiseFulfilledResult<NodeInfo> =>
-              node.status === "fulfilled",
-          )
-          .map((node) => node.value);
-      }
-
-      return await fetcher<NodeInfo[]>(url);
-    },
+    (url: string) => fetcher<NodeInfo[]>(url),
   );
 
   const channelDataKeys = nodeInfo.data?.map(
@@ -148,14 +102,12 @@ export default function Search() {
   }
 
   const sortedNodes = [...nodeInfo.data!].sort((a, b) => {
-    const channelsA = channelsData.data?.[a.id] || [];
-    const channelsB = channelsData.data?.[b.id] || [];
-    const capacityA = channelsA.reduce(
-      (acc, channel) => acc + channel.capacity,
+    const capacityA = (channelsData.data?.[a.id] || []).reduce(
+      (acc, c) => acc + c.capacity,
       0,
     );
-    const capacityB = channelsB.reduce(
-      (acc, channel) => acc + channel.capacity,
+    const capacityB = (channelsData.data?.[b.id] || []).reduce(
+      (acc, c) => acc + c.capacity,
       0,
     );
     return capacityB - capacityA;
@@ -164,13 +116,15 @@ export default function Search() {
   return (
     <>
       <Header />
-      <div className="flex flex-col items-center justify-center">
-        <h1>Search result</h1>
-        <p>
-          {nodeInfo.data!.length} results found for "{trimLongString(query!)}"
+      <main className="mx-auto flex max-w-2xl flex-col items-center px-4 pt-12 pb-16">
+        <span className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+          Search
+        </span>
+        <h1 className="mt-2">Search result</h1>
+        <p className="text-muted-foreground mt-2">
+          {nodeInfo.data!.length} results found for "{trimLongString(query)}"
         </p>
-        {decodedInvoice && <InvoiceInfo decoded={decodedInvoice} />}
-        <div className="w-full max-w-xl">
+        <div className="mt-8 flex w-full flex-col gap-3">
           {sortedNodes.map((node) => (
             <SearchResult
               key={node.id}
@@ -179,7 +133,199 @@ export default function Search() {
             />
           ))}
         </div>
-      </div>
+      </main>
     </>
+  );
+}
+
+// -- Decoded invoice / offer ----------------------------------------------
+
+// Keyed by the InvoiceType enum values so TS flags drift if one is reworded.
+const SIGNER_LABEL = {
+  BOLT11: "Payee node",
+  "BOLT12 offer": "Offer issuer",
+  "BOLT12 invoice": "Invoice node",
+} satisfies Record<InvoiceType, string>;
+
+const ROUTING_LABEL = {
+  BOLT11: "Routing hints",
+  "BOLT12 offer": "Blinded path introduction nodes",
+  "BOLT12 invoice": "Blinded path introduction nodes",
+} satisfies Record<InvoiceType, string>;
+
+function FieldList({ fields }: { fields: DecodedField[] }) {
+  if (fields.length === 0) {
+    return null;
+  }
+  return (
+    <div className="border-border bg-card rounded-2xl border p-5">
+      <dl className="flex flex-col divide-y divide-border/60">
+        {fields.map((f) => (
+          <div
+            key={f.label}
+            className="flex flex-col gap-0.5 py-2.5 first:pt-0 last:pb-0 sm:flex-row sm:items-baseline sm:justify-between sm:gap-6">
+            <dt className="text-muted-foreground shrink-0 text-sm">
+              {f.label}
+            </dt>
+            <dd className="font-mono text-sm break-all sm:text-right">
+              {f.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function NodeRef({
+  label,
+  pubkey,
+  node,
+  loading,
+}: {
+  label: string;
+  pubkey: string;
+  node?: NodeInfo;
+  loading: boolean;
+}) {
+  return (
+    <Link
+      to={`/node/${pubkey}`}
+      className="border-border/60 bg-card/40 hover:border-border hover:bg-card/70 block rounded-xl border p-4 transition-colors">
+      <span className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+        {label}
+      </span>
+      <div className="mt-2 flex items-center gap-2">
+        <span
+          aria-hidden
+          className="size-2.5 shrink-0 rounded-full ring-1 ring-inset ring-black/20"
+          style={{ background: nodeSwatch(node?.color) }}
+        />
+        <span className="truncate font-semibold">
+          {node?.alias ?? (loading ? "Loading…" : "Unknown node")}
+        </span>
+      </div>
+      <p className="text-muted-foreground mt-1 font-mono text-xs break-all">
+        {pubkey}
+      </p>
+      {/* Only claim the node is missing once the lookup has actually finished. */}
+      {!loading && node === undefined && (
+        <p className="text-muted-foreground/70 mt-1 text-xs">
+          Not found in the public graph
+        </p>
+      )}
+    </Link>
+  );
+}
+
+function DecodedInvoiceView({
+  query,
+  invoiceType,
+}: {
+  query: string;
+  invoiceType: InvoiceType;
+}) {
+  const decoded = useSWR<DecodedInvoice>(["decode", query], () =>
+    decodeInvoice(invoiceType, query),
+  );
+
+  const pubkeys = decoded.data
+    ? [decoded.data.signer, ...decoded.data.routingNodes].filter(
+        (pubkey): pubkey is string => Boolean(pubkey),
+      )
+    : [];
+
+  const nodes = useSWR<Record<string, NodeInfo>>(
+    decoded.data ? ["decode-nodes", ...pubkeys] : null,
+    async () => {
+      const results = await Promise.allSettled(
+        pubkeys.map(async (pubkey) => {
+          const node = await fetcher<NodeInfo>(
+            `${API_URL}/v2/lightning/${CURRENCY}/node/${pubkey}`,
+          );
+          return [pubkey, node] as const;
+        }),
+      );
+      const map: Record<string, NodeInfo> = {};
+      results.forEach((result) => {
+        if (result.status === "fulfilled") {
+          map[result.value[0]] = result.value[1];
+        }
+      });
+      return map;
+    },
+  );
+
+  if (decoded.error) {
+    return <Error error={decoded.error} />;
+  }
+  if (decoded.isLoading || decoded.data === undefined) {
+    return <LoadingSpinnerFullscreen />;
+  }
+
+  const data = decoded.data;
+  const nodeMap = nodes.data ?? {};
+  const nodesLoading = nodes.isLoading;
+
+  return (
+    <>
+      <Header />
+      <main className="mx-auto flex max-w-2xl flex-col px-4 pt-12 pb-16">
+        <div className="flex flex-col items-center text-center">
+          <span className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
+            Decoded
+          </span>
+          <h1 className="mt-2">{data.invoiceType}</h1>
+          {data.invoiceAmountSat !== undefined && (
+            <p className="mt-2 font-mono text-lg">
+              {satoshisToSatcomma(data.invoiceAmountSat)} BTC
+            </p>
+          )}
+        </div>
+
+        <div className="mt-8 flex flex-col gap-6">
+          <FieldList fields={data.fields} />
+
+          {data.signer && (
+            <NodeRef
+              label={SIGNER_LABEL[data.invoiceType]}
+              pubkey={data.signer}
+              node={nodeMap[data.signer]}
+              loading={nodesLoading}
+            />
+          )}
+
+          {data.routingNodes.length > 0 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                {ROUTING_LABEL[data.invoiceType]}
+              </h2>
+              {data.routingNodes.map((pubkey) => (
+                <NodeRef
+                  key={pubkey}
+                  label="Routing node"
+                  pubkey={pubkey}
+                  node={nodeMap[pubkey]}
+                  loading={nodesLoading}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    </>
+  );
+}
+
+// -- Router ----------------------------------------------------------------
+
+export default function Search() {
+  const { query } = useParams();
+  const invoiceType = isInvoice(query!);
+
+  return invoiceType !== undefined ? (
+    <DecodedInvoiceView query={query!} invoiceType={invoiceType} />
+  ) : (
+    <AliasSearchView query={query!} />
   );
 }
